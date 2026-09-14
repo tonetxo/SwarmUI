@@ -658,53 +658,58 @@ public class ComfyUISelfStartBackend : ComfyUIAPIAbstractBackend
                     await update("numpy", "numpy==1.26.4");
                 }
                 await install("peft", "peft"); // Late-added nunchaku dep
-                // Nunchaku devs seem very confused how to python package. So we gotta do some cursed install for them.
-                bool isValid = true;
-                string pyVers = "310";
-                Process proc = DoPythonCall("--version");
-                string actualPyVers = await proc.StandardOutput.ReadToEndAsync();
-                if (actualPyVers.Contains("Python 3.11")) { pyVers = "311"; }
-                else if (actualPyVers.Contains("Python 3.13")) { pyVers = "313"; }
-                else if (actualPyVers.Contains("Python 3.12")) { pyVers = "312"; }
-                else if (actualPyVers.Contains("Python 3.10")) { pyVers = "310"; }
-                else
-                {
-                    Logs.Error($"Nunchaku is not currently supported on your python version.");
-                    isValid = false;
-                }
-                string osVers = RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? "win_amd64" : "linux_x86_64";
-                (string torchPipVers, string cudaVers) = getRawVersion("torch").BeforeAndAfter('+');
-                string torchVers = "2.8";
-                if (torchPipVers.StartsWith("2.8.")) { torchVers = "2.8"; }
-                else if (torchPipVers.StartsWith("2.9.")) { torchVers = "2.9"; }
-                else if (torchPipVers.StartsWith("2.10.")) { torchVers = "2.10"; }
-                else if (torchPipVers.StartsWith("2.11.")) { torchVers = "2.11"; }
-                else
-                {
-                    Logs.Error($"Nunchaku is not currently supported on your Torch version, you have torch {torchPipVers} but you need at least Torch 2.8 (up to 2.11).");
-                    isValid = false;
-                }
-                string cutarget = "cu12.8";
-                if (cudaVers == "cu128") { cutarget = "cu12.8"; }
-                else if (cudaVers == "cu130") { cutarget = "cu13.0"; }
-                else
-                {
-                    Logs.Error($"Nunchaku is not currently supported on your Torch CUDA version, you have torch+{cudaVers} but you need cu12.8 or cu13.0.");
-                    isValid = false;
-                }
+                string nunchakuVers = getVers("nunchaku");
                 string nunchakuTargetVersion = "1.2.1";
-                // eg https://github.com/nunchaku-ai/nunchaku/releases/download/v1.2.1/nunchaku-1.2.1+cu12.8torch2.10-cp310-cp310-linux_x86_64.whl
-                string url = $"https://github.com/nunchaku-tech/nunchaku/releases/download/v{nunchakuTargetVersion}/nunchaku-{nunchakuTargetVersion}+{cutarget}torch{torchVers}-cp{pyVers}-cp{pyVers}-{osVers}.whl";
-                if (isValid)
+                Version curNunchaku = nunchakuVers is null ? null : ParseVersion(nunchakuVers);
+                Version targetNunchaku = ParseVersion(nunchakuTargetVersion);
+                bool needsNunchaku = curNunchaku is null || curNunchaku < targetNunchaku || (curNunchaku == targetNunchaku && nunchakuVers.Contains(".dev"));
+                if (needsNunchaku)
                 {
-                    string nunchakuVers = getVers("nunchaku");
-                    if (nunchakuVers is not null && (ParseVersion(nunchakuVers) < ParseVersion(nunchakuTargetVersion) || nunchakuVers.Contains(".dev")))
-                    {
-                        await update("nunchaku", url);
-                    }
+                    // Nunchaku devs seem very confused how to python package. So we gotta do some cursed install for them.
+                    bool isValid = true;
+                    string pyVers = "310";
+                    Process proc = DoPythonCall("--version");
+                    string actualPyVers = await proc.StandardOutput.ReadToEndAsync();
+                    if (actualPyVers.Contains("Python 3.11")) { pyVers = "311"; }
+                    else if (actualPyVers.Contains("Python 3.13")) { pyVers = "313"; }
+                    else if (actualPyVers.Contains("Python 3.12")) { pyVers = "312"; }
+                    else if (actualPyVers.Contains("Python 3.10")) { pyVers = "310"; }
                     else
                     {
-                        await install("nunchaku", url);
+                        Logs.Warning($"Nunchaku prebuilt wheel is not currently supported on your python version.");
+                        isValid = false;
+                    }
+                    string osVers = RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? "win_amd64" : "linux_x86_64";
+                    (string torchPipVers, string cudaVers) = getRawVersion("torch").BeforeAndAfter('+');
+                    string torchVers = "2.8";
+                    if (torchPipVers.StartsWith("2.8.")) { torchVers = "2.8"; }
+                    else if (torchPipVers.StartsWith("2.9.")) { torchVers = "2.9"; }
+                    else if (torchPipVers.StartsWith("2.10.")) { torchVers = "2.10"; }
+                    else if (torchPipVers.StartsWith("2.11.")) { torchVers = "2.11"; }
+                    else
+                    {
+                        Logs.Warning($"Nunchaku prebuilt wheel is not currently supported on your Torch version, you have torch {torchPipVers} but official wheels require Torch 2.8 to 2.11.");
+                        isValid = false;
+                    }
+                    string cutarget = "cu12.8";
+                    if (cudaVers == "cu128") { cutarget = "cu12.8"; }
+                    else if (cudaVers == "cu130") { cutarget = "cu13.0"; }
+                    else
+                    {
+                        Logs.Warning($"Nunchaku prebuilt wheel is not currently supported on your Torch CUDA version, you have torch+{cudaVers} but official wheels require cu12.8 or cu13.0.");
+                        isValid = false;
+                    }
+                    string url = $"https://github.com/nunchaku-tech/nunchaku/releases/download/v{nunchakuTargetVersion}/nunchaku-{nunchakuTargetVersion}+{cutarget}torch{torchVers}-cp{pyVers}-cp{pyVers}-{osVers}.whl";
+                    if (isValid)
+                    {
+                        if (curNunchaku is not null)
+                        {
+                            await update("nunchaku", url);
+                        }
+                        else
+                        {
+                            await install("nunchaku", url);
+                        }
                     }
                 }
                 // Late-added requirements of nunchaku
