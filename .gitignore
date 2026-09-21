@@ -36,3 +36,4 @@ venv/
 
 CLAUDE.md
 .claude/
+.agents/
