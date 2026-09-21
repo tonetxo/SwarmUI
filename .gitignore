@@ -31,3 +31,4 @@ docker-compose.yml
 __pycache__/
 venv/
 *.pth
+.agents/
