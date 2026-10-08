@@ -399,6 +399,7 @@ public class H3FaceRefineExtension : Extension
         int steps = g.UserInput.Get(H3FaceRefineSteps, 8);
         string canvasMode = g.UserInput.Get(H3FaceRefineCanvasSize, "auto_capped_768");
         int feather = g.UserInput.Get(H3FaceRefineFeather, 24);
+        double confidence = g.UserInput.Get(H3FaceRefineConfidence, 0.35);
         bool hasRefImage = g.UserInput.TryGet(H3FaceRefineReferenceImage, out Image refImg) && refImg is not null;
         string userPrompt = g.UserInput.Get(H3FaceRefinePrompt, "");
         if (string.IsNullOrWhiteSpace(userPrompt))
