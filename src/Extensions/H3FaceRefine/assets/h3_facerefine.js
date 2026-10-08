@@ -61,7 +61,8 @@
                 'h3facecanvassize',
                 'h3facefeather',
                 'h3facedetectionconfidence',
-                'h3faceprompt'
+                'h3faceprompt',
+                'h3facereferenceimage'
             ];
 
             // Always read the Face Refine parameters, even if the group toggle is unchecked in the Generate panel

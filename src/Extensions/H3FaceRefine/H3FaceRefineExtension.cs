@@ -25,6 +25,7 @@ public class H3FaceRefineExtension : Extension
     public static T2IRegisteredParam<int> H3FaceRefineFeather;
     public static T2IRegisteredParam<double> H3FaceRefineConfidence;
     public static T2IRegisteredParam<string> H3FaceRefinePrompt;
+    public static T2IRegisteredParam<Image> H3FaceRefineReferenceImage;
 
     // Internal history video parameter
     public static T2IRegisteredParam<string> H3FaceRefineVideoFile;
@@ -180,6 +181,18 @@ public class H3FaceRefineExtension : Extension
             OrderPriority: priority++,
             FeatureFlag: "h3_face_refine",
             DoNotPreview: true
+        ));
+
+        H3FaceRefineReferenceImage = T2IParamTypes.Register<Image>(new T2IParamType(
+            Name: "H3 Face Reference Image",
+            Description: "[Optional] Reference portrait/photo of the person to restore.\n" +
+                         "- In H3FaceTrackCrop: Uses InsightFace to lock onto this person's identity across the entire video.\n" +
+                         "- In MiniMax H3: Conditions the DiT on this reference portrait (<Picture 1>) to transfer exact facial features, likeness, and high-frequency details.",
+            Default: null,
+            Toggleable: true,
+            Group: H3FaceRefineGroup,
+            OrderPriority: priority++,
+            FeatureFlag: "h3_face_refine"
         ));
 
         H3FaceRefineVideoFile = T2IParamTypes.Register<string>(new T2IParamType(
@@ -399,10 +412,18 @@ public class H3FaceRefineExtension : Extension
 
         long baseSeed = g.UserInput.Get(T2IParamTypes.Seed, 0);
 
+        bool hasRefImage = g.UserInput.TryGet(H3FaceRefineReferenceImage, out Image refImg) && refImg is not null;
+        JArray refImageNode = null;
+        if (hasRefImage)
+        {
+            refImageNode = g.LoadImage(refImg, "${h3_face_refine_reference_image}", false).Path;
+            Logs.Info("H3 Face Refine: Reference portrait image loaded for InsightFace identity lock & DiT reference conditioning.");
+        }
+
         // Helper to process one face stage
         JArray ProcessFaceStage(JArray frames, string selectMode, int selectIndex, string stageLabel, long seedOffset)
         {
-            Logs.Info($"H3 Face Refine: Adding stage '{stageLabel}' (select={selectMode}, index={selectIndex}, denoise={denoise}, steps={steps})");
+            Logs.Info($"H3 Face Refine: Adding stage '{stageLabel}' (select={selectMode}, index={selectIndex}, denoise={denoise}, steps={steps}, hasRef={refImageNode is not null})");
 
             JObject trackCropInputs = new()
             {
@@ -417,7 +438,7 @@ public class H3FaceRefineExtension : Extension
                 ["size_smooth_window"] = 51,
                 ["smooth_method"] = "gaussian",
                 ["size_mode"] = "per_frame",
-                ["identity_track"] = false,
+                ["identity_track"] = refImageNode is not null,
                 ["identity_threshold"] = 0.28,
                 ["select"] = selectMode,
                 ["fallback_detector"] = "segm/person_yolov8m-seg.pt",
@@ -426,6 +447,10 @@ public class H3FaceRefineExtension : Extension
                 ["identity_model"] = "insightface",
                 ["cut_detection"] = "none"
             };
+            if (refImageNode is not null)
+            {
+                trackCropInputs["identity_reference"] = refImageNode;
+            }
             string trackCropNode = g.CreateNode("H3FaceTrackCrop", trackCropInputs);
             JArray crops = [trackCropNode, 0];
             JArray transform = [trackCropNode, 1];
@@ -433,16 +458,26 @@ public class H3FaceRefineExtension : Extension
             JArray canvasH = [trackCropNode, 5];
             JArray frameCount = [trackCropNode, 6];
 
+            string stagePrompt = userPrompt;
+            if (refImageNode is not null && !stagePrompt.Contains("<Picture 1>"))
+            {
+                stagePrompt = $"<Picture 1> {stagePrompt}";
+            }
+
             JObject ref2vidInputs = new()
             {
                 ["clip"] = g.CurrentTextEnc.Path,
-                ["prompt"] = userPrompt,
+                ["prompt"] = stagePrompt,
                 ["width"] = canvasW,
                 ["height"] = canvasH,
                 ["length"] = frameCount,
                 ["ref_image_size"] = "match",
                 ["vae"] = g.CurrentVae.Path
             };
+            if (refImageNode is not null)
+            {
+                ref2vidInputs["ref_image_1"] = refImageNode;
+            }
             if (g.CurrentAudioVae is not null)
             {
                 ref2vidInputs["audio_vae"] = g.CurrentAudioVae.Path;
