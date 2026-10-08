@@ -88,7 +88,9 @@
             }
 
             // Disarm standard refiners / init images from the session so they cannot contaminate on-demand video refinement
-            input_overrides['refinermethod'] = 'None';
+            input_overrides['refinermethod'] = null;
+            input_overrides['refinermodel'] = null;
+            input_overrides['refinerupscale'] = null;
             input_overrides['initimage'] = null;
 
             if (typeof showToast === 'function') {
