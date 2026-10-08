@@ -399,20 +399,16 @@ public class H3FaceRefineExtension : Extension
         int steps = g.UserInput.Get(H3FaceRefineSteps, 8);
         string canvasMode = g.UserInput.Get(H3FaceRefineCanvasSize, "auto_capped_768");
         int feather = g.UserInput.Get(H3FaceRefineFeather, 24);
-        double confidence = g.UserInput.Get(H3FaceRefineConfidence, 0.35);
+        bool hasRefImage = g.UserInput.TryGet(H3FaceRefineReferenceImage, out Image refImg) && refImg is not null;
         string userPrompt = g.UserInput.Get(H3FaceRefinePrompt, "");
         if (string.IsNullOrWhiteSpace(userPrompt))
         {
-            userPrompt = g.UserInput.Get(T2IParamTypes.Prompt, "high quality detailed face, realistic eyes, natural skin texture");
-            if (string.IsNullOrWhiteSpace(userPrompt))
-            {
-                userPrompt = "high quality detailed face, realistic eyes, natural skin texture";
-            }
+            userPrompt = hasRefImage
+                ? "photorealistic face of this person, realistic eyes, detailed facial features, natural skin texture"
+                : "high quality detailed face, realistic eyes, natural skin texture";
         }
 
         long baseSeed = g.UserInput.Get(T2IParamTypes.Seed, 0);
-
-        bool hasRefImage = g.UserInput.TryGet(H3FaceRefineReferenceImage, out Image refImg) && refImg is not null;
         JArray refImageNode = null;
         if (hasRefImage)
         {
@@ -501,7 +497,7 @@ public class H3FaceRefineExtension : Extension
                 ["av_latent"] = injectedLatent,
                 ["transform"] = transform,
                 ["denoise_multiplier_small_face"] = 1.0,
-                ["denoise_multiplier_large_face"] = 0.35,
+                ["denoise_multiplier_large_face"] = 1.0,
                 ["scale_mode"] = "absolute_px",
                 ["face_px_small"] = 30.0,
                 ["face_px_large"] = 120.0,
@@ -573,7 +569,7 @@ public class H3FaceRefineExtension : Extension
         }
 
         JArray finalFrames;
-        if (targetMode == "Both Faces (Chained)")
+        if (targetMode == "Both Faces (Chained)" && !hasRefImage)
         {
             // Stage 1: Left person
             JArray stage1 = ProcessFaceStage(inputFrames, "left_most", 0, "Person 1 (Left)", 77);
@@ -596,9 +592,9 @@ public class H3FaceRefineExtension : Extension
         {
             finalFrames = ProcessFaceStage(inputFrames, "centre_most", 0, "Center Person", 77);
         }
-        else // Primary Face (Largest)
+        else // Primary Face (Largest) or reference target
         {
-            finalFrames = ProcessFaceStage(inputFrames, "largest_face", 0, "Primary Face", 77);
+            finalFrames = ProcessFaceStage(inputFrames, "largest_face", 0, hasRefImage ? "Reference Target Face" : "Primary Face", 77);
         }
 
         return finalFrames;
