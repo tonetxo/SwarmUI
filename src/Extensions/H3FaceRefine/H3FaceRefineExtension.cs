@@ -146,8 +146,8 @@ public class H3FaceRefineExtension : Extension
 
         H3FaceRefineFeather = T2IParamTypes.Register<int>(new T2IParamType(
             Name: "H3 Face Feather",
-            Description: "Gaussian blur feather radius in source pixels applied to the composite paste mask. 6-10 provides seamless edge integration.",
-            Default: "8",
+            Description: "Gaussian blur feather radius in source pixels applied to the composite paste mask. 12-20 provides soft, invisible edge blending.",
+            Default: "16",
             Min: 2,
             Max: 64,
             Step: 2,
@@ -398,7 +398,7 @@ public class H3FaceRefineExtension : Extension
         double denoise = g.UserInput.Get(H3FaceRefineDenoise, 0.38);
         int steps = g.UserInput.Get(H3FaceRefineSteps, 8);
         string canvasMode = g.UserInput.Get(H3FaceRefineCanvasSize, "auto_capped_768");
-        int feather = g.UserInput.Get(H3FaceRefineFeather, 24);
+        int feather = g.UserInput.Get(H3FaceRefineFeather, 16);
         double confidence = g.UserInput.Get(H3FaceRefineConfidence, 0.35);
         bool hasRefImage = g.UserInput.TryGet(H3FaceRefineReferenceImage, out Image refImg) && refImg is not null;
         string userPrompt = g.UserInput.Get(H3FaceRefinePrompt, "");
@@ -431,7 +431,7 @@ public class H3FaceRefineExtension : Extension
                 ["canvas_width"] = 768,
                 ["canvas_height"] = 768,
                 ["canvas_mode"] = canvasMode,
-                ["smooth_window"] = 21,
+                ["smooth_window"] = 11,
                 ["size_smooth_window"] = 51,
                 ["smooth_method"] = "gaussian",
                 ["size_mode"] = "per_frame",
