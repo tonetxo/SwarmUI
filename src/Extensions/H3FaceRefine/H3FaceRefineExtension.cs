@@ -103,11 +103,11 @@ public class H3FaceRefineExtension : Extension
 
         H3FaceRefineDenoise = T2IParamTypes.Register<double>(new T2IParamType(
             Name: "H3 Face Denoise",
-            Description: "Denoising strength for the face region (0.35-0.40 recommended).\n" +
-                         "Lower values (0.25-0.35) keep original facial identity closely while sharpening.\n" +
-                         "Higher values (0.40-0.50) synthesize more detail on very small faces.",
-            Default: "0.38",
-            Min: 0.10,
+            Description: "Denoising strength for the face region (0.22-0.30 recommended for H3 Flow Matching).\n" +
+                         "0.20-0.28 preserves head orientation, jawline, and hairline while transferring facial likeness.\n" +
+                         "Values above 0.35 cause head drift relative to the body due to H3's sigma shift.",
+            Default: "0.26",
+            Min: 0.05,
             Max: 0.80,
             Step: 0.01,
             ViewType: ParamViewType.SLIDER,
@@ -146,9 +146,9 @@ public class H3FaceRefineExtension : Extension
 
         H3FaceRefineFeather = T2IParamTypes.Register<int>(new T2IParamType(
             Name: "H3 Face Feather",
-            Description: "Gaussian blur feather radius in source pixels applied to the composite paste mask. 16-24 provides seamless integration.",
-            Default: "24",
-            Min: 4,
+            Description: "Gaussian blur feather radius in source pixels applied to the composite paste mask. 6-10 provides seamless edge integration.",
+            Default: "8",
+            Min: 2,
             Max: 64,
             Step: 2,
             Group: H3FaceRefineGroup,
@@ -559,10 +559,10 @@ public class H3FaceRefineExtension : Extension
                 ["base_images"] = frames,
                 ["refined_crops"] = refinedCrops,
                 ["transform"] = transform,
-                ["paste_region"] = "face_only",
-                ["mask_dilation"] = 16,
+                ["paste_region"] = "face_ellipse",
+                ["mask_dilation"] = 6,
                 ["feather"] = feather,
-                ["colour_match"] = 1.0,
+                ["colour_match"] = 0.5,
                 ["blend"] = 1.0,
                 ["undetected_frames"] = "fade_out"
             });
