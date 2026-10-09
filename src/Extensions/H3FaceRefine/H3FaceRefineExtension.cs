@@ -71,6 +71,13 @@ public class H3FaceRefineExtension : Extension
         Logs.Init("MiniMax H3 Face Refine Extension loaded successfully.");
     }
 
+    public override void PopulateMetadata()
+    {
+        Version = "1.0.0";
+        ExtensionAuthor = "Tonetxo";
+        Description = "MiniMax H3 Face Refiner: tracks faces in videos and restores facial identities.";
+    }
+
     private static void RegisterParameters()
     {
         H3FaceRefineGroup = new(
