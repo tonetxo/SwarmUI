@@ -26,6 +26,7 @@ public class H3FaceRefineExtension : Extension
     public static T2IRegisteredParam<double> H3FaceRefineConfidence;
     public static T2IRegisteredParam<string> H3FaceRefinePrompt;
     public static T2IRegisteredParam<Image> H3FaceRefineReferenceImage;
+    public static T2IRegisteredParam<Image> H3FaceRefineReferenceImage2;
 
     // Internal history video parameter
     public static T2IRegisteredParam<string> H3FaceRefineVideoFile;
@@ -185,9 +186,21 @@ public class H3FaceRefineExtension : Extension
 
         H3FaceRefineReferenceImage = T2IParamTypes.Register<Image>(new T2IParamType(
             Name: "H3 Face Reference Image",
-            Description: "[Optional] Reference portrait/photo of the person to restore.\n" +
+            Description: "[Optional] Reference portrait/photo for Person 1 (or Left Person in dual-face workflows).\n" +
                          "- In H3FaceTrackCrop: Uses InsightFace to lock onto this person's identity across the entire video.\n" +
                          "- In MiniMax H3: Conditions the DiT on this reference portrait (<Picture 1>) to transfer exact facial features, likeness, and high-frequency details.",
+            Default: null,
+            Toggleable: true,
+            Group: H3FaceRefineGroup,
+            OrderPriority: priority++,
+            FeatureFlag: "h3_face_refine"
+        ));
+
+        H3FaceRefineReferenceImage2 = T2IParamTypes.Register<Image>(new T2IParamType(
+            Name: "H3 Face Reference Image 2",
+            Description: "[Optional] Reference portrait/photo for Person 2 (or Right Person in dual-face workflows).\n" +
+                         "- In H3FaceTrackCrop: Uses InsightFace to lock onto Person 2's identity across the entire video.\n" +
+                         "- In MiniMax H3: Conditions the DiT on this reference portrait (<Picture 1>) during stage 2.",
             Default: null,
             Toggleable: true,
             Group: H3FaceRefineGroup,
@@ -400,27 +413,35 @@ public class H3FaceRefineExtension : Extension
         string canvasMode = g.UserInput.Get(H3FaceRefineCanvasSize, "auto_capped_768");
         int feather = g.UserInput.Get(H3FaceRefineFeather, 16);
         double confidence = g.UserInput.Get(H3FaceRefineConfidence, 0.35);
-        bool hasRefImage = g.UserInput.TryGet(H3FaceRefineReferenceImage, out Image refImg) && refImg is not null;
+        bool hasRefImage1 = g.UserInput.TryGet(H3FaceRefineReferenceImage, out Image refImg1) && refImg1 is not null;
+        bool hasRefImage2 = g.UserInput.TryGet(H3FaceRefineReferenceImage2, out Image refImg2) && refImg2 is not null;
         string userPrompt = g.UserInput.Get(H3FaceRefinePrompt, "");
         if (string.IsNullOrWhiteSpace(userPrompt))
         {
-            userPrompt = hasRefImage
+            userPrompt = (hasRefImage1 || hasRefImage2)
                 ? "photorealistic face of this person, realistic eyes, detailed facial features, natural skin texture"
                 : "high quality detailed face, realistic eyes, natural skin texture";
         }
 
         long baseSeed = g.UserInput.Get(T2IParamTypes.Seed, 0);
-        JArray refImageNode = null;
-        if (hasRefImage)
+        JArray refImageNode1 = null;
+        if (hasRefImage1)
         {
-            refImageNode = g.LoadImage(refImg, "${h3_face_refine_reference_image}", false).Path;
-            Logs.Info("H3 Face Refine: Reference portrait image loaded for InsightFace identity lock & DiT reference conditioning.");
+            refImageNode1 = g.LoadImage(refImg1, "${h3_face_refine_reference_image}", false).Path;
+            Logs.Info("H3 Face Refine: Reference portrait 1 loaded for Person 1.");
+        }
+        JArray refImageNode2 = null;
+        if (hasRefImage2)
+        {
+            refImageNode2 = g.LoadImage(refImg2, "${h3_face_refine_reference_image_2}", false).Path;
+            Logs.Info("H3 Face Refine: Reference portrait 2 loaded for Person 2.");
         }
 
         // Helper to process one face stage
-        JArray ProcessFaceStage(JArray frames, string selectMode, int selectIndex, string stageLabel, long seedOffset)
+        JArray ProcessFaceStage(JArray frames, string selectMode, int selectIndex, string stageLabel, long seedOffset, JArray stageRefImageNode)
         {
-            Logs.Info($"H3 Face Refine: Adding stage '{stageLabel}' (select={selectMode}, index={selectIndex}, denoise={denoise}, steps={steps}, hasRef={refImageNode is not null})");
+            bool hasStageRef = stageRefImageNode is not null;
+            Logs.Info($"H3 Face Refine: Adding stage '{stageLabel}' (select={selectMode}, index={selectIndex}, denoise={denoise}, steps={steps}, hasRef={hasStageRef})");
 
             JObject trackCropInputs = new()
             {
@@ -435,7 +456,7 @@ public class H3FaceRefineExtension : Extension
                 ["size_smooth_window"] = 51,
                 ["smooth_method"] = "gaussian",
                 ["size_mode"] = "per_frame",
-                ["identity_track"] = refImageNode is not null,
+                ["identity_track"] = hasStageRef,
                 ["identity_threshold"] = 0.28,
                 ["select"] = selectMode,
                 ["fallback_detector"] = "segm/person_yolov8m-seg.pt",
@@ -444,9 +465,9 @@ public class H3FaceRefineExtension : Extension
                 ["identity_model"] = "insightface",
                 ["cut_detection"] = "none"
             };
-            if (refImageNode is not null)
+            if (hasStageRef)
             {
-                trackCropInputs["identity_reference"] = refImageNode;
+                trackCropInputs["identity_reference"] = stageRefImageNode;
             }
             string trackCropNode = g.CreateNode("H3FaceTrackCrop", trackCropInputs);
             JArray crops = [trackCropNode, 0];
@@ -456,7 +477,7 @@ public class H3FaceRefineExtension : Extension
             JArray frameCount = [trackCropNode, 6];
 
             string stagePrompt = userPrompt;
-            if (refImageNode is not null && !stagePrompt.Contains("<Picture 1>"))
+            if (hasStageRef && !stagePrompt.Contains("<Picture 1>"))
             {
                 stagePrompt = $"<Picture 1> {stagePrompt}";
             }
@@ -471,9 +492,9 @@ public class H3FaceRefineExtension : Extension
                 ["ref_image_size"] = "match",
                 ["vae"] = g.CurrentVae.Path
             };
-            if (refImageNode is not null)
+            if (hasStageRef)
             {
-                ref2vidInputs["ref_image_1"] = refImageNode;
+                ref2vidInputs["ref_image_1"] = stageRefImageNode;
             }
             if (g.CurrentAudioVae is not null)
             {
@@ -570,32 +591,32 @@ public class H3FaceRefineExtension : Extension
         }
 
         JArray finalFrames;
-        if (targetMode == "Both Faces (Chained)" && !hasRefImage)
+        if (targetMode == "Both Faces (Chained)")
         {
-            // Stage 1: Left person
-            JArray stage1 = ProcessFaceStage(inputFrames, "left_most", 0, "Person 1 (Left)", 77);
-            // Stage 2: Right person (chained onto stage 1 output)
-            finalFrames = ProcessFaceStage(stage1, "right_most", 0, "Person 2 (Right)", 78);
+            // Stage 1: Left person (Person 1) using Reference 1 if supplied
+            JArray stage1 = ProcessFaceStage(inputFrames, "left_most", 0, "Person 1 (Left)", 77, refImageNode1);
+            // Stage 2: Right person (Person 2) chained onto Stage 1 output, using Reference 2 if supplied
+            finalFrames = ProcessFaceStage(stage1, "right_most", 0, "Person 2 (Right)", 78, refImageNode2);
         }
         else if (targetMode == "Left Person")
         {
-            finalFrames = ProcessFaceStage(inputFrames, "left_most", 0, "Left Person", 77);
+            finalFrames = ProcessFaceStage(inputFrames, "left_most", 0, "Left Person", 77, refImageNode1);
         }
         else if (targetMode == "Right Person")
         {
-            finalFrames = ProcessFaceStage(inputFrames, "right_most", 0, "Right Person", 77);
+            finalFrames = ProcessFaceStage(inputFrames, "right_most", 0, "Right Person", 77, refImageNode2 ?? refImageNode1);
         }
         else if (targetMode == "Secondary Face")
         {
-            finalFrames = ProcessFaceStage(inputFrames, "largest_face", 1, "Secondary Face", 77);
+            finalFrames = ProcessFaceStage(inputFrames, "largest_face", 1, "Secondary Face", 77, refImageNode2 ?? refImageNode1);
         }
         else if (targetMode == "Center Person")
         {
-            finalFrames = ProcessFaceStage(inputFrames, "centre_most", 0, "Center Person", 77);
+            finalFrames = ProcessFaceStage(inputFrames, "centre_most", 0, "Center Person", 77, refImageNode1);
         }
-        else // Primary Face (Largest) or reference target
+        else // Primary Face (Largest)
         {
-            finalFrames = ProcessFaceStage(inputFrames, "largest_face", 0, hasRefImage ? "Reference Target Face" : "Primary Face", 77);
+            finalFrames = ProcessFaceStage(inputFrames, "largest_face", 0, (refImageNode1 is not null) ? "Reference Target Face" : "Primary Face", 77, refImageNode1);
         }
 
         return finalFrames;
