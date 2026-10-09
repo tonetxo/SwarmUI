@@ -63,7 +63,7 @@
                 'h3facedetectionconfidence',
                 'h3faceprompt',
                 'h3facereferenceimage',
-                'h3facereferenceimage2'
+                'h3facereferenceimagetwo'
             ];
 
             // Always read the Face Refine parameters, even if the group toggle is unchecked in the Generate panel
