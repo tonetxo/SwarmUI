@@ -81,7 +81,7 @@
                 input_overrides['h3facetarget'] = 'Both Faces (Chained)';
             }
             if (!input_overrides['h3facedenoise']) {
-                input_overrides['h3facedenoise'] = 0.38;
+                input_overrides['h3facedenoise'] = 0.26;
             }
             if (!input_overrides['h3facesteps']) {
                 input_overrides['h3facesteps'] = 8;
