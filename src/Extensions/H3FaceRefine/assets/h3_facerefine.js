@@ -86,6 +86,9 @@
             if (!input_overrides['h3facesteps']) {
                 input_overrides['h3facesteps'] = 8;
             }
+            if (!input_overrides['h3facefeather']) {
+                input_overrides['h3facefeather'] = 16;
+            }
 
             // Disarm standard refiners / init images from the session so they cannot contaminate on-demand video refinement
             input_overrides['refinermethod'] = null;
