@@ -197,7 +197,7 @@ public class H3FaceRefineExtension : Extension
         ));
 
         H3FaceRefineReferenceImage2 = T2IParamTypes.Register<Image>(new T2IParamType(
-            Name: "H3 Face Reference Image 2",
+            Name: "H3 Face Reference Image Two",
             Description: "[Optional] Reference portrait/photo for Person 2 (or Right Person in dual-face workflows).\n" +
                          "- In H3FaceTrackCrop: Uses InsightFace to lock onto Person 2's identity across the entire video.\n" +
                          "- In MiniMax H3: Conditions the DiT on this reference portrait (<Picture 1>) during stage 2.",
