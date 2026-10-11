@@ -52,43 +52,51 @@
             let input_overrides = { 'images': 1 };
             let fullsrc = typeof getImageFullSrc === 'function' ? getImageFullSrc(src) : src;
             let prefix = typeof getImageOutPrefix === 'function' ? getImageOutPrefix() : 'Output';
+            input_overrides['hfacerefinevideofile'] = prefix + '/' + fullsrc;
             input_overrides['h3facerefinevideofile'] = prefix + '/' + fullsrc;
 
             let h3Params = [
-                'h3facetarget',
-                'h3facedenoise',
-                'h3facesteps',
-                'h3facecanvassize',
-                'h3facefeather',
-                'h3facedetectionconfidence',
-                'h3faceprompt',
-                'h3facereferenceimage',
-                'h3facereferenceimagetwo'
+                'target',
+                'denoise',
+                'steps',
+                'canvassize',
+                'feather',
+                'detectionconfidence',
+                'prompt',
+                'referenceimage',
+                'referenceimagetwo'
             ];
 
-            // Always read the Face Refine parameters, even if the group toggle is unchecked in the Generate panel
-            for (let paramId of h3Params) {
-                let elem = document.getElementById('input_' + paramId);
+            // Always read the Face Refine parameters from the Generate panel, matching SwarmUI's clean IDs
+            for (let param of h3Params) {
+                let cleanId = 'hface' + param;
+                let legacyId = 'h3face' + param;
+                let elem = document.getElementById('input_' + cleanId) || document.getElementById('input_' + legacyId);
                 if (elem) {
-                    let val = typeof getInputVal === 'function' ? getInputVal(elem, false) : elem.value;
+                    let val = typeof getInputVal === 'function' ? getInputVal(elem, false) : (elem.dataset && elem.dataset.filedata ? elem.dataset.filedata : elem.value);
                     if (val != null && val !== '') {
-                        input_overrides[paramId] = val;
+                        input_overrides[cleanId] = val;
+                        input_overrides[legacyId] = val;
                     }
                 }
             }
 
-            // Guarantee essential defaults if anything was empty or untoggled
-            if (!input_overrides['h3facetarget']) {
-                input_overrides['h3facetarget'] = 'Both Faces (Chained)';
+            // Defaults: 1 face pass (Primary), 0.30 denoise, 6 steps, 22px feather
+            if (!input_overrides['hfacetarget']) {
+                input_overrides['hfacetarget'] = 'Primary Face (Largest)';
+                input_overrides['h3facetarget'] = 'Primary Face (Largest)';
             }
-            if (!input_overrides['h3facedenoise']) {
-                input_overrides['h3facedenoise'] = 0.26;
+            if (!input_overrides['hfacedenoise']) {
+                input_overrides['hfacedenoise'] = 0.30;
+                input_overrides['h3facedenoise'] = 0.30;
             }
-            if (!input_overrides['h3facesteps']) {
-                input_overrides['h3facesteps'] = 8;
+            if (!input_overrides['hfacesteps']) {
+                input_overrides['hfacesteps'] = 6;
+                input_overrides['h3facesteps'] = 6;
             }
-            if (!input_overrides['h3facefeather']) {
-                input_overrides['h3facefeather'] = 16;
+            if (!input_overrides['hfacefeather']) {
+                input_overrides['hfacefeather'] = 22;
+                input_overrides['h3facefeather'] = 22;
             }
 
             // Disarm standard refiners / init images from the session so they cannot contaminate on-demand video refinement
