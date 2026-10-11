@@ -101,7 +101,7 @@ public class H3FaceRefineExtension : Extension
                          "- 'Secondary Face': Refines the second largest face.\n" +
                          "- 'Left Person' / 'Right Person': For dialog or 2-shot scenes.\n" +
                          "- 'Center Person': Focuses on the central subject.",
-            Default: "Both Faces (Chained)",
+            Default: "Primary Face (Largest)",
             Group: H3FaceRefineGroup,
             OrderPriority: priority++,
             FeatureFlag: "h3_face_refine",
@@ -111,10 +111,10 @@ public class H3FaceRefineExtension : Extension
 
         H3FaceRefineDenoise = T2IParamTypes.Register<double>(new T2IParamType(
             Name: "H3 Face Denoise",
-            Description: "Denoising strength for the face region (0.22-0.30 recommended for H3 Flow Matching).\n" +
-                         "0.20-0.28 preserves head orientation, jawline, and hairline while transferring facial likeness.\n" +
-                         "Values above 0.35 cause head drift relative to the body due to H3's sigma shift.",
-            Default: "0.26",
+            Description: "Denoising strength for the face region (0.28-0.34 recommended for H3 Flow Matching).\n" +
+                         "0.30 preserves head orientation, expression, and jawline while transferring facial likeness.\n" +
+                         "Values above 0.40 cause head drift relative to the body due to H3's sigma shift.",
+            Default: "0.30",
             Min: 0.05,
             Max: 0.80,
             Step: 0.01,
@@ -127,8 +127,8 @@ public class H3FaceRefineExtension : Extension
 
         H3FaceRefineSteps = T2IParamTypes.Register<int>(new T2IParamType(
             Name: "H3 Face Steps",
-            Description: "Sampling steps for the MiniMax H3 DiT refiner. Typically 4 to 8 steps.",
-            Default: "8",
+            Description: "Sampling steps for the MiniMax H3 DiT refiner. Typically 4 to 8 steps (6 recommended).",
+            Default: "6",
             Min: 1,
             Max: 20,
             Step: 1,
@@ -154,8 +154,8 @@ public class H3FaceRefineExtension : Extension
 
         H3FaceRefineFeather = T2IParamTypes.Register<int>(new T2IParamType(
             Name: "H3 Face Feather",
-            Description: "Gaussian blur feather radius in source pixels applied to the composite paste mask. 12-20 provides soft, invisible edge blending.",
-            Default: "16",
+            Description: "Gaussian blur feather radius in source pixels applied to the composite paste mask. 18-24 provides soft, invisible edge blending.",
+            Default: "22",
             Min: 2,
             Max: 64,
             Step: 2,
@@ -414,11 +414,11 @@ public class H3FaceRefineExtension : Extension
     /// <summary>Modular pipeline for tracking, cropping, DiT refining, and seamless face stitching.</summary>
     public static JArray ExecuteFaceRefinementPipeline(WorkflowGenerator g, JArray inputFrames)
     {
-        string targetMode = g.UserInput.Get(H3FaceRefineTarget, "Both Faces (Chained)");
-        double denoise = g.UserInput.Get(H3FaceRefineDenoise, 0.38);
-        int steps = g.UserInput.Get(H3FaceRefineSteps, 8);
+        string targetMode = g.UserInput.Get(H3FaceRefineTarget, "Primary Face (Largest)");
+        double denoise = g.UserInput.Get(H3FaceRefineDenoise, 0.30);
+        int steps = g.UserInput.Get(H3FaceRefineSteps, 6);
         string canvasMode = g.UserInput.Get(H3FaceRefineCanvasSize, "auto_capped_768");
-        int feather = g.UserInput.Get(H3FaceRefineFeather, 16);
+        int feather = g.UserInput.Get(H3FaceRefineFeather, 22);
         double confidence = g.UserInput.Get(H3FaceRefineConfidence, 0.35);
         bool hasRefImage1 = g.UserInput.TryGet(H3FaceRefineReferenceImage, out Image refImg1) && refImg1 is not null;
         bool hasRefImage2 = g.UserInput.TryGet(H3FaceRefineReferenceImage2, out Image refImg2) && refImg2 is not null;
@@ -501,7 +501,7 @@ public class H3FaceRefineExtension : Extension
             };
             if (hasStageRef)
             {
-                ref2vidInputs["ref_image_1"] = stageRefImageNode;
+                ref2vidInputs["ref_images.ref_image_0"] = stageRefImageNode;
             }
             if (g.CurrentAudioVae is not null)
             {
@@ -587,8 +587,8 @@ public class H3FaceRefineExtension : Extension
                 ["base_images"] = frames,
                 ["refined_crops"] = refinedCrops,
                 ["transform"] = transform,
-                ["paste_region"] = "face_ellipse",
-                ["mask_dilation"] = 6,
+                ["paste_region"] = "face_only",
+                ["mask_dilation"] = 16,
                 ["feather"] = feather,
                 ["colour_match"] = 0.5,
                 ["blend"] = 1.0,
@@ -598,7 +598,7 @@ public class H3FaceRefineExtension : Extension
         }
 
         JArray finalFrames;
-        if (targetMode == "Both Faces (Chained)")
+        if (targetMode == "Both Faces (Chained)" && (hasRefImage2 || !hasRefImage1))
         {
             // Stage 1: Left person (Person 1) using Reference 1 if supplied
             JArray stage1 = ProcessFaceStage(inputFrames, "left_most", 0, "Person 1 (Left)", 77, refImageNode1);
