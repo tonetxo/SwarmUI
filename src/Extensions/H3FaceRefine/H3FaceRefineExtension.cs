@@ -36,6 +36,11 @@ public class H3FaceRefineExtension : Extension
     public static T2IRegisteredParam<double> H3FaceAlignStrength;
     public static T2IRegisteredParam<int> H3FaceAlignSmooth;
     public static T2IRegisteredParam<double> H3FaceAlignMaxShift;
+    public static T2IRegisteredParam<bool> H3FaceSAMMask;
+    public static T2IRegisteredParam<double> H3FaceSAMThreshold;
+    public static T2IRegisteredParam<int> H3FaceSAMDilation;
+    public static T2IRegisteredParam<int> H3FaceSAMFeather;
+    public static T2IRegisteredParam<double> H3FaceAlignMaxRate;
 
     // Internal history video parameter
     public static T2IRegisteredParam<string> H3FaceRefineVideoFile;
@@ -83,6 +88,21 @@ public class H3FaceRefineExtension : Extension
 
         /// <summary>Default auto-align max shift, in crop pixels.</summary>
         public const double AlignMaxShift = 40.0;
+
+        /// <summary>Feather used with SAM face masks (they need a small one, per the pack: 4-8).</summary>
+        public const int SamMaskFeather = 6;
+
+        /// <summary>Impact Pack SAM model filename used for face-shaped paste masks.</summary>
+        public const string SamModel = "sam_vit_b_01ec64.pth";
+
+        /// <summary>Default SAM candidate-mask score threshold.</summary>
+        public const double SamThreshold = 0.93;
+
+        /// <summary>Default SAM mask dilation, in canvas px (tight for SAM, avoids halo).</summary>
+        public const int SamDilation = 6;
+
+        /// <summary>Default align-correction slope cap, in px per frame.</summary>
+        public const double AlignMaxRate = 0.5;
     }
 
     /// <summary>Formats a numeric default as its invariant-culture string for parameter registration.</summary>
@@ -403,6 +423,74 @@ public class H3FaceRefineExtension : Extension
             IsAdvanced: true
         ));
 
+        H3FaceSAMMask = T2IParamTypes.Register<bool>(new T2IParamType(
+            Name: "H3 Face SAM Mask",
+            Description: "Segment the face per frame with SAM (ComfyUI-Impact-Pack) and paste through that face-shaped mask instead of a fixed ellipse - the blend follows jaw and hairline, killing the border artifacts of a fixed mask. Needs ComfyUI-Impact-Pack and a SAM model in models/sams/.",
+            Default: "true",
+            Toggleable: true,
+            Group: H3FaceRefineGroup,
+            OrderPriority: priority++,
+            FeatureFlag: "h3_face_refine",
+            DoNotPreview: true
+        ));
+
+        H3FaceSAMThreshold = T2IParamTypes.Register<double>(new T2IParamType(
+            Name: "H3 Face SAM Threshold",
+            Description: "Candidate-mask score threshold for SAM. High (0.93) keeps only high-confidence segments - with a substituted identity SAM sometimes latches onto a sub-part of the face. Lower (0.5-0.7) if the mask looks too small.",
+            Default: Num(H3FaceRefineDefaults.SamThreshold),
+            Min: 0.0,
+            Max: 1.0,
+            Step: 0.01,
+            ViewType: ParamViewType.SLIDER,
+            Group: H3FaceRefineGroup,
+            OrderPriority: priority++,
+            FeatureFlag: "h3_face_refine",
+            DoNotPreview: true,
+            IsAdvanced: true
+        ));
+
+        H3FaceSAMDilation = T2IParamTypes.Register<int>(new T2IParamType(
+            Name: "H3 Face SAM Dilation",
+            Description: "Grow the SAM mask outward, in canvas px. Grows past the silhouette so the refined face's slightly different jaw/hairline is covered - raise it if you see the refined face clipped at the mask edge.",
+            Default: Num(H3FaceRefineDefaults.SamDilation),
+            Min: 0,
+            Max: 96,
+            Step: 2,
+            Group: H3FaceRefineGroup,
+            OrderPriority: priority++,
+            FeatureFlag: "h3_face_refine",
+            DoNotPreview: true,
+            IsAdvanced: true
+        ));
+
+        H3FaceSAMFeather = T2IParamTypes.Register<int>(new T2IParamType(
+            Name: "H3 Face SAM Feather",
+            Description: "Feather radius (canvas px) used with the SAM mask. The pack recommends 4-8; raise to 12-16 if the mask edge still shows as a seam.",
+            Default: Num(H3FaceRefineDefaults.SamMaskFeather),
+            Min: 2,
+            Max: 64,
+            Step: 2,
+            Group: H3FaceRefineGroup,
+            OrderPriority: priority++,
+            FeatureFlag: "h3_face_refine",
+            DoNotPreview: true,
+            IsAdvanced: true
+        ));
+
+        H3FaceAlignMaxRate = T2IParamTypes.Register<double>(new T2IParamType(
+            Name: "H3 Face Align Max Rate",
+            Description: "Maximum align-correction change per frame (px). Caps the correction slope so landmark noise cannot make the pasted face oscillate or pop; genuine movement runs ~0.7px/frame, so the default 0.5 tracks it. Lower to 0.3 for maximum calm.",
+            Default: Num(H3FaceRefineDefaults.AlignMaxRate),
+            Min: 0.1,
+            Max: 3.0,
+            Step: 0.05,
+            Group: H3FaceRefineGroup,
+            OrderPriority: priority++,
+            FeatureFlag: "h3_face_refine",
+            DoNotPreview: true,
+            IsAdvanced: true
+        ));
+
         H3FaceRefineVideoFile = T2IParamTypes.Register<string>(new T2IParamType(
             Name: "H3 Face Refine Video File",
             Description: "Internal parameter used by the 'H3 Face Refine' button on completed videos.",
@@ -692,6 +780,7 @@ public class H3FaceRefineExtension : Extension
         double multSmall = g.UserInput.Get(H3FaceRefineMultSmall, H3FaceRefineDefaults.MultSmall);
         double multLarge = g.UserInput.Get(H3FaceRefineMultLarge, H3FaceRefineDefaults.MultLarge);
         bool autoAlignPaste = g.UserInput.Get(H3FaceRealignPaste, true);
+        bool samMask = g.UserInput.Get(H3FaceSAMMask, true);
         bool hasAudioLock = g.Features.Contains("h3_audio_lock") && g.CurrentAudioVae is not null;
         string targetMode = targetModeRaw; // validated above against TargetOptions
         bool hasRefImage1 = g.UserInput.TryGet(H3FaceRefineReferenceImage, out Image refImg1) && refImg1 is not null;
@@ -894,14 +983,41 @@ public class H3FaceRefineExtension : Extension
             });
             JArray refinedCrops = [decodeNode, 0];
 
+            JArray pasteMask = null;
+            if (samMask)
+            {
+                // Face-shaped paste masks: SAM segments the actual face per stabilised crop, so
+                // the blend follows jaw/hairline instead of an arbitrary ellipse - this kills the
+                // border artifacts a fixed mask shows when the geometry of the two faces differs.
+                // SAM masks are accurate: per the pack, keep feather SMALL (4-8) with them.
+                string samLoader = g.CreateNode("SAMLoader", new JObject()
+                {
+                    ["model_name"] = H3FaceRefineDefaults.SamModel,
+                    ["device_mode"] = "AUTO"
+                });
+                string samMaskNode = g.CreateNode("H3FaceMaskSAM", new JObject()
+                {
+                    ["crops"] = crops,
+                    ["sam_model"] = new JArray(samLoader, 0),
+                    ["transform"] = transform,
+                    ["threshold"] = g.UserInput.Get(H3FaceSAMThreshold, H3FaceRefineDefaults.SamThreshold),
+                    ["dilation"] = g.UserInput.Get(H3FaceSAMDilation, H3FaceRefineDefaults.SamDilation),
+                    ["temporal_smooth"] = 5
+                });
+                pasteMask = [samMaskNode, 0];
+                Logs.Info("H3 Face Refine: SAM mask generated from source crops.");
+            }
+
             // H3's repaint re-frames the face content inside the crop by a few pixels while the
             // paste position itself is exact - which reads as the refined face sliding over the
             // original head. The node detects the face in each refined crop and in the matching
             // source crop and shifts the refined one so the two faces coincide (translation only,
             // so a substituted identity is not distorted).
+            // When a SAM mask is present, it is warped by the exact same transform so the mask
+            // stays perfectly synchronized with the realigned facial features.
             if (autoAlignPaste)
             {
-                string realignNode = g.CreateNode("SwarmH3FaceRealign", new JObject()
+                JObject realignInputs = new()
                 {
                     ["refined_crops"] = refinedCrops,
                     ["source_crops"] = crops,
@@ -910,23 +1026,39 @@ public class H3FaceRefineExtension : Extension
                     ["confidence"] = confidence,
                     ["max_shift"] = g.UserInput.Get(H3FaceAlignMaxShift, H3FaceRefineDefaults.AlignMaxShift),
                     ["align_strength"] = g.UserInput.Get(H3FaceAlignStrength, H3FaceRefineDefaults.AlignStrength),
-                    ["smooth_frames"] = g.UserInput.Get(H3FaceAlignSmooth, H3FaceRefineDefaults.AlignSmooth)
-                });
+                    ["smooth_frames"] = g.UserInput.Get(H3FaceAlignSmooth, H3FaceRefineDefaults.AlignSmooth),
+                    ["max_rate"] = g.UserInput.Get(H3FaceAlignMaxRate, H3FaceRefineDefaults.AlignMaxRate)
+                };
+                if (pasteMask is not null)
+                {
+                    realignInputs["mask"] = pasteMask;
+                }
+                string realignNode = g.CreateNode("SwarmH3FaceRealign", realignInputs);
                 refinedCrops = [realignNode, 0];
+                if (pasteMask is not null)
+                {
+                    pasteMask = [realignNode, 1];
+                    Logs.Info("H3 Face Refine: SAM mask realigned with face transformation.");
+                }
             }
 
-            string stitchNode = g.CreateNode("H3FaceStitch", new JObject()
+            JObject stitchInputs = new()
             {
                 ["base_images"] = frames,
                 ["refined_crops"] = refinedCrops,
                 ["transform"] = transform,
                 ["paste_region"] = "face_ellipse",
                 ["mask_dilation"] = 24,
-                ["feather"] = feather,
+                ["feather"] = samMask ? g.UserInput.Get(H3FaceSAMFeather, H3FaceRefineDefaults.SamMaskFeather) : feather,
                 ["colour_match"] = 1.0,
                 ["blend"] = 1.0,
                 ["undetected_frames"] = "fade_out"
-            });
+            };
+            if (pasteMask is not null)
+            {
+                stitchInputs["masks"] = pasteMask;
+            }
+            string stitchNode = g.CreateNode("H3FaceStitch", stitchInputs);
             return [stitchNode, 0];
         }
 
