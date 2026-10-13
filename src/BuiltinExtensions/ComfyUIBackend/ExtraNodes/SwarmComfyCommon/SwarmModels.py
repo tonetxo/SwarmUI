@@ -340,24 +340,28 @@ class SwarmH3FaceRealign(io.ComfyNode):
                 io.Int.Input("smooth_frames", default=9, min=1, max=51, step=2, tooltip="Gaussian window used to smooth the shift over time within each shot."),
                 io.Boolean.Input("scale_match", default=True, tooltip="Also match the inter-eye distance (uniform scale, clamped 0.75-1.35), cancelling H3's progressive zoom of the repainted face inside the crop."),
                 io.Float.Input("max_rate", default=0.5, min=0.05, max=3.0, step=0.05, tooltip="Maximum correction change per frame (px). Caps the slope so detection noise cannot make the face oscillate; genuine movement is far slower than this."),
+                io.Mask.Input("mask", optional=True, tooltip="Optional paste mask stack (e.g. from SAM). If supplied, warped by the exact same affine transform so the mask matches the realigned face."),
             ],
-            outputs=[io.Image.Output(display_name="realigned_crops")],
+            outputs=[
+                io.Image.Output(display_name="realigned_crops"),
+                io.Mask.Output(display_name="realigned_mask"),
+            ],
         )
 
     @classmethod
     def execute(cls, refined_crops, source_crops, transform, detector: str, confidence: float,
                 max_shift: float, align_strength: float, smooth_frames: int, scale_match: bool = True,
-                max_rate: float = 0.5) -> io.NodeOutput:
+                max_rate: float = 0.5, mask = None) -> io.NodeOutput:
         import numpy as np
         import comfy.model_management as mm
         total_frames = min(refined_crops.shape[0], source_crops.shape[0])
         if total_frames < 1:
-            return io.NodeOutput(refined_crops)
+            return io.NodeOutput(refined_crops, mask)
         app = _realign_face_app()
         box_model = _realign_detector(detector)
         if app is None and box_model is None:
             print(f"[SwarmH3FaceRealign] no face detector available - passing through unchanged")
-            return io.NodeOutput(refined_crops)
+            return io.NodeOutput(refined_crops, mask)
         dev = mm.get_torch_device()
         detected = transform.get("detected") or [True] * total_frames
         absent = transform.get("absent") or [False] * total_frames
@@ -426,7 +430,7 @@ class SwarmH3FaceRealign(io.ComfyNode):
         if not good.any():
             print(f"[SwarmH3FaceRealign] no frame had both faces within {max_shift:.0f}px "
                   f"(source {int(src_ok.sum())}, refined {int(ref_ok.sum())}, both {int(both_ok.sum())}) - passing through unchanged")
-            return io.NodeOutput(refined_crops)
+            return io.NodeOutput(refined_crops, mask)
 
         # Median-filter raw shifts per segment, then reject spikes: eye-landmark noise on
         # partial/profile/substituted faces creates isolated frames whose centre jumps many
@@ -554,6 +558,20 @@ class SwarmH3FaceRealign(io.ComfyNode):
         out = refined_crops.clone()
         out = out[:total_frames, ..., :3] if out.shape[0] > total_frames else out
         out = out.to(dev)
+
+        out_mask = None
+        mask_in = None
+        if mask is not None:
+            out_mask = mask.clone()
+            if out_mask.shape[0] > total_frames:
+                out_mask = out_mask[:total_frames]
+            out_mask = out_mask.to(dev).float()
+            # Standardize mask shape: ensure [B, 1, H, W] for grid_sample
+            if out_mask.ndim == 3:
+                mask_in = out_mask.unsqueeze(1)
+            elif out_mask.ndim == 4:
+                mask_in = out_mask if out_mask.shape[1] == 1 else out_mask.movedim(-1, 1)[:, :1]
+
         chunk = max(1, min(32, int(1024 / max((ch * cw * 3 * 4) / 2 ** 20, 1e-6))))
         for c0 in range(0, k_count, chunk):
             c1 = min(c0 + chunk, k_count)
@@ -579,6 +597,14 @@ class SwarmH3FaceRealign(io.ComfyNode):
             grid = F.affine_grid(thetas, (n, 3, ch, cw), align_corners=False)
             out[c0:c1] = F.grid_sample(ref[c0:c1].movedim(-1, 1), grid, mode="bilinear",
                                        padding_mode="border", align_corners=False).movedim(1, -1)
+            if mask_in is not None:
+                # Warp the paste mask using the exact same affine transformation
+                warped_m = F.grid_sample(mask_in[c0:c1], grid, mode="bilinear",
+                                         padding_mode="zeros", align_corners=False)
+                if out_mask.ndim == 3:
+                    out_mask[c0:c1] = warped_m.squeeze(1).clamp(0, 1)
+                else:
+                    out_mask[c0:c1] = warped_m.movedim(1, -1).clamp(0, 1)
 
         residual = np.hypot(ox_all, oy_all)
         jx = np.hypot(np.diff(ox_all), np.diff(oy_all))
@@ -605,7 +631,7 @@ class SwarmH3FaceRealign(io.ComfyNode):
             if start is not None:
                 runs.append((start, k_count - 1))
             print(f"[SwarmH3FaceRealign] correction runs >1px: {runs[:8]}")
-        return io.NodeOutput(out)
+        return io.NodeOutput(out, out_mask)
 
 NODE_CLASS_MAPPINGS = {
     "SwarmLTXVAudioVAELoader": SwarmLTXVAudioVAELoader,
