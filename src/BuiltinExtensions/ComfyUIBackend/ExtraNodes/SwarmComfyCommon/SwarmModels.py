@@ -339,13 +339,15 @@ class SwarmH3FaceRealign(io.ComfyNode):
                 io.Float.Input("align_strength", default=1.0, min=0.0, max=1.0, step=0.05),
                 io.Int.Input("smooth_frames", default=9, min=1, max=51, step=2, tooltip="Gaussian window used to smooth the shift over time within each shot."),
                 io.Boolean.Input("scale_match", default=True, tooltip="Also match the inter-eye distance (uniform scale, clamped 0.75-1.35), cancelling H3's progressive zoom of the repainted face inside the crop."),
+                io.Float.Input("max_rate", default=0.5, min=0.05, max=3.0, step=0.05, tooltip="Maximum correction change per frame (px). Caps the slope so detection noise cannot make the face oscillate; genuine movement is far slower than this."),
             ],
             outputs=[io.Image.Output(display_name="realigned_crops")],
         )
 
     @classmethod
     def execute(cls, refined_crops, source_crops, transform, detector: str, confidence: float,
-                max_shift: float, align_strength: float, smooth_frames: int, scale_match: bool = True) -> io.NodeOutput:
+                max_shift: float, align_strength: float, smooth_frames: int, scale_match: bool = True,
+                max_rate: float = 0.5) -> io.NodeOutput:
         import numpy as np
         import comfy.model_management as mm
         total_frames = min(refined_crops.shape[0], source_crops.shape[0])
@@ -480,6 +482,19 @@ class SwarmH3FaceRealign(io.ComfyNode):
             return out_v if n_cols > 1 else out_v[:, 0]
 
         filled = interp_smooth(shift, 0.0)
+
+        # Rate-limit the correction slope: eye-midpoint measurements on a REPAINTED
+        # (possibly substituted) face stay noisy frame to frame, and even after the median
+        # + gaussian passes the applied correction can jump 1-3px between consecutive
+        # frames - which reads as the face oscillating. Capping the slope guarantees calm
+        # motion; genuine content movement is gradual (~0.7px/frame), so a small cap
+        # tracks it. Two passes (forward+backward) keep the cap symmetric (no lag bias).
+        max_rate = float(max(0.05, max_rate))
+        for d_pass in (1, -1):
+            rng = range(1, k_count) if d_pass == 1 else range(k_count - 2, -1, -1)
+            for k in rng:
+                prev = filled[k - d_pass]
+                filled[k] = np.clip(filled[k], prev - max_rate, prev + max_rate)
 
         # Scale match: H3's repaint can also progressively ZOOM the face content inside the
         # crop, which translation alone cannot cancel (reads as the pasted face slowly drifting
