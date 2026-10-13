@@ -61,17 +61,26 @@ If the contents of a skill file become outdated due to updates to the relevant s
 
 When starting a task, always check for if there are any relevant skill files to use.
 
-## Building
+## Build & Verify Commands
 
-Agents never run their own builds, the user does it themselves. Agents may check automated linters.
+CI runs these (see `.github/workflows/`), and so can you:
+
+- `dotnet build SwarmUI.sln --configuration Release`
+- `dotnet format --verify-no-changes` and `dotnet format style --verify-no-changes` - the linter check. Formatting follows `src/.editorconfig`.
+- `launchtools/run_tests.sh` / `launchtools/run_tests.bat` - runs all NUnit tests (`dotnet test SwarmUITests/SwarmUITests.csproj --configuration Release`). A single test: same command with `--filter <TestName>`.
+- Live smoke test (also run by CI): `./launch-linux.sh --ci-test true --launch_mode none --loglevel debug` - builds, boots the server headless, and shuts it down. Add `--ci-test-extensions true` to also smoke-test the extensions listed in `launchtools/extension_list.fds`.
+
+Agents never run their own builds for the developer beyond these checks, the developer runs the live software themselves.
 
 ## Tests
 
 This repo is complex, and made of many interlinked parts not easily mockable, and heavily depends on slow expensive GPU operations.
 
-NUnit unit tests live in the `SwarmUITests` project. Run them with `launchtools/run_tests.bat` (Windows) or `launchtools/run_tests.sh` (Linux/macOS). A GitHub Action runs these on push and pull request.
+NUnit unit tests live in the `SwarmUITests` project. A GitHub Action runs them on push and pull request.
 
 These tests cover isolated C# logic. Live GPU-backed behavior is not covered. Developers must still manually run the live software to verify those. Agents cannot run most forms of testing. Agents should do their best to logically validate through static analysis and step-by-step execution logic tracking before the developer spends time testing.
+
+Dev launchers (`launch-linux-dev.sh`, etc.) treat exit code 42 as "restart the server" and loop automatically - don't be surprised by it, and don't break that convention when touching launch code.
 
 ## General Edit Strategy
 
@@ -141,8 +150,7 @@ New JS files intended to be used on the genpage exclusively must be added to `sr
 Before reimplementing common behavior, check these:
 - `createDiv(id, classes, html)` in `util.js` - DOM element creation
 - `escapeHtml(text)` in `util.js` - HTML escaping
-
-(TODO: more javascript info)
+- `genericRequest(url, in_data, callback)` in `site.js` - the way frontend code calls Swarm's backend API routes (never raw `fetch`)
 
 ## C# Info
 
@@ -162,8 +170,6 @@ This section applies to the general `src/*.cs` files.
 
 We have both many internal utilities, and rely on [FreneticUtilities](https://github.com/FreneticLLC/FreneticUtilities) for many additional common utilities. For example, we always use `ToLowerFast` from FreneticUtilities when lowercasing a string. Always check if there's an appropriate function before reimplementing established behavior.
 
-(TODO: more C# info)
-
 ## Python Info
 
 This section applies to `src/BuiltinExtensions/ComfyUIBackend/ExtraNodes`.
@@ -178,4 +184,4 @@ You will want to reference the ComfyUI source code found in `dlbackend/`. Never 
 - Mostly standard python syntax
 - Most code is in comfy node formats, sometimes stray `def` functions
 
-(TODO: more python info)
+For any deviations, generally follow comfy rules. Extension python that defines comfy nodes should be written to also work in regular comfy installs.
