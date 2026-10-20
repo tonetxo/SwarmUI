@@ -1,4 +1,9 @@
 // MiniMax H3 Face Refine action button in SwarmUI history & media viewers
+
+// addInstallButton(groupId, featureId, installId, buttonText) - 'H3 Face Refine' cleans to group ID 'hfacerefine'.
+addInstallButton('hfacerefine', 'h3_face_refine', 'h3_face_refine', 'Install H3 Face Refine Nodes');
+addInstallButton('hfacerefine', 'comfyui_impact_pack', 'comfyui_impact_pack', 'Install Impact Pack (SAM face masks)');
+
 (function() {
     try {
         if (typeof deleteCookie === 'function') {

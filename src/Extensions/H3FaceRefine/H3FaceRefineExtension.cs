@@ -150,22 +150,23 @@ public class H3FaceRefineExtension : Extension
         ComfyUIBackendExtension.NodeToFeatureMap["SwarmH3FaceRealign"] = "h3_face_realign";
         string comfyNodesPath = Path.GetFullPath(Utilities.CombinePathWithAbsolute(Environment.CurrentDirectory, $"{FilePath}ComfyNodes"));
         ComfyUISelfStartBackend.CustomNodePaths.Add(comfyNodesPath);
+        // Optional; no installable feature: the node lives in a subfolder of its repository, which the installer cannot clone (see README).
         ComfyUIBackendExtension.NodeToFeatureMap["MiniMaxH3NativeAudioLock"] = "h3_audio_lock";
+        ComfyUIBackendExtension.NodeToFeatureMap["SAMLoader"] = "comfyui_impact_pack";
 
-        // Register installable features if missing
         InstallableFeatures.RegisterInstallableFeature(new(
             "MiniMax H3 Face Refine Nodes",
             "h3_face_refine",
             "https://github.com/Carasibana/ComfyUI-H3-FaceRefine",
-            "comfyui",
+            "Carasibana",
             "This will install the ComfyUI-H3-FaceRefine node pack for tracking and restoring faces in MiniMax H3 videos.\nDo you wish to install?"
         ));
         InstallableFeatures.RegisterInstallableFeature(new(
-            "MiniMax H3 Native Audio Lock",
-            "h3_audio_lock",
-            "https://github.com/Shrek3OnVH5/MiniMax-H3-NativeAudio-MusicVideo-Workflow",
-            "comfyui",
-            "This will install the node pack that provides MiniMaxH3NativeAudioLock, which locks the source audio into the joint AV latent during face refinement so the model does not invent its own.\nThe node pack lives under custom_nodes/ComfyUI-H3-NativeAudioLock inside that repository.\nDo you wish to install?"
+            "ComfyUI Impact Pack",
+            "comfyui_impact_pack",
+            "https://github.com/ltdrdata/ComfyUI-Impact-Pack",
+            "ltdrdata",
+            "This will install ComfyUI-Impact-Pack (GPL-3.0) by ltdrdata, used by H3 Face Refine for SAM face-shaped paste masks.\nThe SAM model is not downloaded automatically: place sam_vit_b_01ec64.pth in ComfyUI's models/sams/ folder.\nDo you wish to install?"
         ));
 
         // Add history / media action JS
@@ -433,7 +434,7 @@ public class H3FaceRefineExtension : Extension
             Toggleable: true,
             Group: H3FaceRefineGroup,
             OrderPriority: priority++,
-            FeatureFlag: "h3_face_refine",
+            FeatureFlag: "h3_face_refine,comfyui_impact_pack",
             DoNotPreview: true
         ));
 
@@ -447,7 +448,7 @@ public class H3FaceRefineExtension : Extension
             ViewType: ParamViewType.SLIDER,
             Group: H3FaceRefineGroup,
             OrderPriority: priority++,
-            FeatureFlag: "h3_face_refine",
+            FeatureFlag: "h3_face_refine,comfyui_impact_pack",
             DoNotPreview: true,
             IsAdvanced: true
         ));
@@ -461,7 +462,7 @@ public class H3FaceRefineExtension : Extension
             Step: 2,
             Group: H3FaceRefineGroup,
             OrderPriority: priority++,
-            FeatureFlag: "h3_face_refine",
+            FeatureFlag: "h3_face_refine,comfyui_impact_pack",
             DoNotPreview: true,
             IsAdvanced: true
         ));
@@ -475,7 +476,7 @@ public class H3FaceRefineExtension : Extension
             Step: 2,
             Group: H3FaceRefineGroup,
             OrderPriority: priority++,
-            FeatureFlag: "h3_face_refine",
+            FeatureFlag: "h3_face_refine,comfyui_impact_pack",
             DoNotPreview: true,
             IsAdvanced: true
         ));
@@ -568,35 +569,6 @@ public class H3FaceRefineExtension : Extension
         return UserImageHistoryHelper.GetRealPathFor(user, relativePath, root: root);
     }
 
-    private static (string container, string codec) GetVideoFormat(WorkflowGenerator g)
-    {
-        string swarmVideoFormat = g.UserInput.Get(T2IParamTypes.VideoFormat, "h264-mp4");
-        // Normalize user-supplied format so weird casing/spacing cannot smuggle unexpected node values.
-        swarmVideoFormat = swarmVideoFormat.ToLowerInvariant().Trim();
-        string container = "mp4";
-        string codec = "auto";
-        if (swarmVideoFormat.Contains("-"))
-        {
-            string[] parts = swarmVideoFormat.Split('-');
-            codec = parts[0];
-            container = parts.Length > 1 ? parts[1] : "mp4";
-        }
-        else
-        {
-            container = swarmVideoFormat;
-        }
-
-        if (container != "mp4" && container != "auto")
-        {
-            container = "mp4";
-        }
-        if (codec != "h264" && codec != "auto")
-        {
-            codec = "auto";
-        }
-        return (container, codec);
-    }
-
     public static void GenerateH3FaceRefineWorkflow(WorkflowGenerator g)
     {
         bool hasVideoFile = g.UserInput.TryGet(H3FaceRefineVideoFile, out string videoFile) && !string.IsNullOrEmpty(videoFile);
@@ -669,29 +641,12 @@ public class H3FaceRefineExtension : Extension
         VideoFile sourceVideo = new(rawVideoData, MediaType.GetByExtension(resolvedPath.AfterLast('.').ToLowerFast()));
 
         WGNodeData videoData = g.LoadVideo(sourceVideo, "${h3_face_refine_source_video}", false);
-        JArray currentFrames = videoData.Path;
-        JArray videoAudio = videoData.AttachedAudio?.Path;
-        JToken videoFps = videoData.FPS;
+        JArray finalFrames = ExecuteFaceRefinementPipeline(g, videoData.Path, videoData.AttachedAudio?.Path);
 
-        JArray finalFrames = ExecuteFaceRefinementPipeline(g, currentFrames, videoAudio);
-
-        string createVideoNode = g.CreateNode("CreateVideo", new JObject()
-        {
-            ["images"] = finalFrames,
-            ["audio"] = videoAudio,
-            ["fps"] = videoFps
-        });
-
-        var (container, codec) = GetVideoFormat(g);
-        g.CreateNode("SaveVideo", new JObject()
-        {
-            ["video"] = new JArray() { createVideoNode, 0 },
-            ["filename_prefix"] = "video/H3_FaceRefined",
-            ["format"] = container,
-            ["codec"] = codec
-        });
-
-        g.CurrentMedia = new WGNodeData(finalFrames, g, WGNodeData.DT_IMAGE, g.CurrentCompat());
+        // Save through Swarm's own output path (keeps the source FPS and audio, honors the user's Video Format),
+        // since the normal final-save step is skipped below.
+        g.CurrentMedia = videoData.WithPath(finalFrames);
+        g.CurrentMedia.SaveOutput(g.CurrentVae, g.CurrentAudioVae, "9");
         g.SkipFurtherSteps = true;
     }
 
@@ -790,7 +745,20 @@ public class H3FaceRefineExtension : Extension
         double multSmall = g.UserInput.Get(H3FaceRefineMultSmall, H3FaceRefineDefaults.MultSmall);
         double multLarge = g.UserInput.Get(H3FaceRefineMultLarge, H3FaceRefineDefaults.MultLarge);
         bool autoAlignPaste = g.UserInput.Get(H3FaceRealignPaste, true);
-        bool samMask = g.UserInput.Get(H3FaceSAMMask, true);
+        bool samExplicit = g.UserInput.TryGet(H3FaceSAMMask, out bool samMask);
+        if (!samExplicit)
+        {
+            samMask = true;
+        }
+        if (samMask && !g.Features.Contains("comfyui_impact_pack"))
+        {
+            if (samExplicit)
+            {
+                throw new SwarmUserErrorException("H3 Face SAM Mask requires ComfyUI-Impact-Pack (SAMLoader), which is not available on this ComfyUI backend. Install it from the H3 Face Refine group, or disable 'H3 Face SAM Mask'.");
+            }
+            Logs.Warning("H3 Face Refine: ComfyUI-Impact-Pack is not available, pasting through the fixed face ellipse instead of a SAM mask.");
+            samMask = false;
+        }
         bool hasAudioLock = g.Features.Contains("h3_audio_lock") && g.CurrentAudioVae is not null;
         string targetMode = targetModeRaw; // validated above against TargetOptions
         bool hasRefImage1 = g.UserInput.TryGet(H3FaceRefineReferenceImage, out Image refImg1) && refImg1 is not null;
