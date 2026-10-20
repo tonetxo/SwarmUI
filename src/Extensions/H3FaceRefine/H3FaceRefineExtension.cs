@@ -146,7 +146,10 @@ public class H3FaceRefineExtension : Extension
 
         // Map ComfyUI node to feature set
         ComfyUIBackendExtension.NodeToFeatureMap["H3FaceTrackCrop"] = "h3_face_refine";
-        ComfyUIBackendExtension.NodeToFeatureMap["SwarmH3FaceRealign"] = "h3_face_refine";
+        // SwarmH3FaceRealign is extension-owned Python (ComfyNodes/), not part of the upstream pack, so it gets its own feature ID.
+        ComfyUIBackendExtension.NodeToFeatureMap["SwarmH3FaceRealign"] = "h3_face_realign";
+        string comfyNodesPath = Path.GetFullPath(Utilities.CombinePathWithAbsolute(Environment.CurrentDirectory, $"{FilePath}ComfyNodes"));
+        ComfyUISelfStartBackend.CustomNodePaths.Add(comfyNodesPath);
         ComfyUIBackendExtension.NodeToFeatureMap["MiniMaxH3NativeAudioLock"] = "h3_audio_lock";
 
         // Register installable features if missing
@@ -515,8 +518,8 @@ public class H3FaceRefineExtension : Extension
         };
     }
 
-    /// <summary>Returns the path unchanged if it stays inside 'root', otherwise a safe fallback path under root.</summary>
-    private static string SanitizeRelativeWithinRoot(string path, string root, string fallbackName)
+    /// <summary>Returns the full path if it stays inside 'root', otherwise throws.</summary>
+    private static string SanitizeRelativeWithinRoot(string path, string root)
     {
         string full = Path.GetFullPath(Utilities.CombinePathWithAbsolute(root, path));
         string rootFull = Path.GetFullPath(root);
@@ -525,46 +528,44 @@ public class H3FaceRefineExtension : Extension
             return full;
         }
         Logs.Warning($"H3 Face Refine: rejected path traversal attempt '{path}' outside of user output root.");
-        return Path.Combine(rootFull, fallbackName);
+        throw new SwarmUserErrorException("H3 Face Refine: only videos from your own output history can be refined.");
     }
 
+    /// <summary>
+    /// Resolves a client-supplied 'Output/...' or 'View/(user)/...' history path to a file inside the requesting user's own output root.
+    /// Anything else (absolute paths, '~/', other users' roots) is rejected, as the value arrives straight from the API.
+    /// </summary>
     private static string ResolveVideoPath(User user, string videoFile)
     {
+        if (user is null)
+        {
+            throw new SwarmUserErrorException("H3 Face Refine: refining a history video requires a user session.");
+        }
         // Normalize separators so the prefix checks below also work on Windows paths.
         videoFile = videoFile.Replace('\\', '/');
-
-        if (videoFile.StartsWith("~/"))
+        string relativePath = null;
+        if (videoFile.StartsWith("Output/"))
         {
-            videoFile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile) + videoFile[1..];
+            relativePath = videoFile["Output/".Length..];
         }
-
-        if (user is not null)
+        else if (videoFile.StartsWith("View/"))
         {
-            string relativePath = null;
-            if (videoFile.StartsWith("Output/"))
+            string afterView = videoFile["View/".Length..];
+            int slashIndex = afterView.IndexOf('/');
+            if (slashIndex > 0)
             {
-                relativePath = videoFile["Output/".Length..];
-            }
-            else if (videoFile.StartsWith("View/"))
-            {
-                string afterView = videoFile["View/".Length..];
-                int slashIndex = afterView.IndexOf('/');
-                if (slashIndex > 0)
-                {
-                    relativePath = afterView[(slashIndex + 1)..];
-                }
-            }
-
-            if (relativePath is not null)
-            {
-                string root = Utilities.CombinePathWithAbsolute(Environment.CurrentDirectory, user.OutputDirectory);
-                // Defense-in-depth: never let a client-supplied relative path escape the user's own output root.
-                relativePath = SanitizeRelativeWithinRoot(relativePath, root, "h3_facerefine_rejected.mp4");
-                return UserImageHistoryHelper.GetRealPathFor(user, relativePath, root: root);
+                relativePath = afterView[(slashIndex + 1)..];
             }
         }
-
-        return videoFile;
+        if (string.IsNullOrWhiteSpace(relativePath))
+        {
+            throw new SwarmUserErrorException("H3 Face Refine: only videos from your own output history can be refined.");
+        }
+        string root = Utilities.CombinePathWithAbsolute(Environment.CurrentDirectory, user.OutputDirectory);
+        // Never let a client-supplied relative path escape the user's own output root.
+        relativePath = SanitizeRelativeWithinRoot(relativePath, root);
+        // GetRealPathFor deliberately remaps core shared special folders, same as the core history routes.
+        return UserImageHistoryHelper.GetRealPathFor(user, relativePath, root: root);
     }
 
     private static (string container, string codec) GetVideoFormat(WorkflowGenerator g)
@@ -633,6 +634,15 @@ public class H3FaceRefineExtension : Extension
             {
                 Logs.Info($"H3 Face Refine: Switching model to '{h3Model.Name}' for face refinement pass.");
                 g.UserInput.Set(T2IParamTypes.Model, h3Model);
+                // The core base model loader already ran (priority -15) with the selected non-H3 model,
+                // so setting the param alone changes nothing: load the H3 model explicitly, mirroring the
+                // core refiner-switch pattern (the user's VAE override belongs to the other architecture).
+                g.FinalLoadedModel = h3Model;
+                g.FinalLoadedModelList = [h3Model];
+                g.CurrentAudioVae = null;
+                g.NoVAEOverride = true;
+                (g.FinalLoadedModel, g.CurrentModel, g.CurrentTextEnc, g.CurrentVae) = g.CreateModelLoader(h3Model, "H3FaceRefine", sectionId: T2IParamInput.SectionID_BaseOnly);
+                g.NoVAEOverride = false;
             }
             else
             {
@@ -1017,6 +1027,10 @@ public class H3FaceRefineExtension : Extension
             // stays perfectly synchronized with the realigned facial features.
             if (autoAlignPaste)
             {
+                if (!g.Features.Contains("h3_face_realign"))
+                {
+                    throw new SwarmUserErrorException("H3 Face Auto-Align Paste requires the extension's SwarmH3FaceRealign node (src/Extensions/H3FaceRefine/ComfyNodes), which is not loaded on this ComfyUI backend. Restart the backend, install that folder into an external ComfyUI's custom_nodes, or disable 'H3 Face Auto-Align Paste'.");
+                }
                 JObject realignInputs = new()
                 {
                     ["refined_crops"] = refinedCrops,
