@@ -2189,6 +2189,9 @@ public class WorkflowGeneratorSteps
                         width = (int)Math.Round(width * scale);
                         height = (int)Math.Round(height * scale);
                     }
+                    int precision = vidModel.ModelClass?.CompatClass?.ResolutionPrecision ?? 16;
+                    width = (width / precision) * precision;
+                    height = (height / precision) * precision;
                 }
                 g.CurrentMedia = g.CurrentMedia.AsRawImage(g.CurrentVae);
                 ImageToVideoGenInfo genInfo = new()
