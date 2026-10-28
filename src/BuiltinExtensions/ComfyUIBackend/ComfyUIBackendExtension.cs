@@ -69,8 +69,7 @@ public class ComfyUIBackendExtension : Extension
         ["TeaCache"] = "teacache",
         ["TeaCacheForVidGen"] = "teacache",
         ["TeaCacheForImgGen"] = "teacache_oldvers",
-        ["OverrideCLIPDevice"] = "set_clip_device",
-        ["MinimaxH3LatentUpscaler3D"] = "minimax_h3_latent_upscaler"
+        ["OverrideCLIPDevice"] = "set_clip_device"
     };
 
     /// <inheritdoc/>
