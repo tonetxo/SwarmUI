@@ -88,3 +88,87 @@ addInstallButton('hfacerefine', 'comfyui_impact_pack', 'comfyui_impact_pack', 'I
         true
     );
 })();
+
+/** Keeps the 'H3 Face Mode' shortcut and the controls it sets in agreement. */
+class H3FaceModeHelper {
+    /** Sets up the values of each mode. 'Restore' must match H3FaceRefineDefaults in the C# code. */
+    constructor() {
+        this.modeId = 'hfacemode';
+        this.manualMode = 'Manual';
+        this.modes = {
+            'Restore': { hfacedenoise: 0.27, hfacedenoiselargeface: 0.65, hfacerefimagesize: 'match' },
+            'Substitute Features': { hfacedenoise: 0.5, hfacedenoiselargeface: 1, hfacerefimagesize: 'max' },
+            'Substitute Full Identity': { hfacedenoise: 0.65, hfacedenoiselargeface: 1, hfacerefimagesize: 'max' }
+        };
+        this.controlIds = Object.keys(this.modes['Restore']);
+    }
+
+    /** Connects to the freshly built controls. Runs after every parameter rebuild, and rebuilt elements have no listeners. */
+    connect() {
+        let modeElem = document.getElementById(`input_${this.modeId}`);
+        if (!modeElem || modeElem.dataset.h3FaceModeConnected) {
+            return;
+        }
+        modeElem.dataset.h3FaceModeConnected = 'true';
+        modeElem.addEventListener('change', (event) => {
+            // Only a real user choice applies a mode. Swarm dispatches untrusted events when it restores or resets values.
+            if (event.isTrusted) {
+                this.applyMode(modeElem.value);
+            }
+        });
+        for (let id of this.controlIds) {
+            document.getElementById(`input_${id}`)?.addEventListener('change', () => this.syncMode());
+        }
+        this.syncMode();
+    }
+
+    /** Sets the controls of the given mode. 'Manual' has no values, so it changes nothing. */
+    applyMode(mode) {
+        let values = this.modes[mode];
+        if (!values) {
+            return;
+        }
+        for (let id of this.controlIds) {
+            let param = gen_param_types.find(p => p.id == id);
+            setDirectParamValue(param, values[id]);
+        }
+    }
+
+    /** Shows the mode that matches the current control values, or 'Manual' if none does. Never changes the controls. */
+    syncMode() {
+        let modeElem = document.getElementById(`input_${this.modeId}`);
+        if (!modeElem) {
+            return;
+        }
+        let matched = this.manualMode;
+        for (let mode of Object.keys(this.modes)) {
+            if (this.valuesMatch(this.modes[mode])) {
+                matched = mode;
+                break;
+            }
+        }
+        modeElem.value = matched;
+    }
+
+    /** Returns true if every control currently has the given value. */
+    valuesMatch(values) {
+        for (let id of this.controlIds) {
+            let elem = document.getElementById(`input_${id}`);
+            if (!elem) {
+                return false;
+            }
+            let expected = values[id];
+            let matches = typeof expected == 'number' ? Math.abs(parseFloat(elem.value) - expected) < 0.001 : elem.value == expected;
+            if (!matches) {
+                return false;
+            }
+        }
+        return true;
+    }
+}
+
+let h3FaceModeHelper = new H3FaceModeHelper();
+
+postParamBuildSteps.push(() => {
+    h3FaceModeHelper.connect();
+});

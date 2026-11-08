@@ -19,6 +19,18 @@ public class H3FaceRefineExtension : Extension
 {
     public static T2IParamGroup H3FaceRefineGroup;
 
+    /// <summary>Closed sub-group for sampling and detection tuning.</summary>
+    public static T2IParamGroup H3FaceRefineQualityGroup;
+
+    /// <summary>Closed sub-group for the auto-align paste controls.</summary>
+    public static T2IParamGroup H3FaceRefineAlignGroup;
+
+    /// <summary>Closed sub-group for the paste mask controls.</summary>
+    public static T2IParamGroup H3FaceRefineMaskGroup;
+
+    /// <summary>Browser-only shortcut that moves the Denoise, Denoise Large Face and Ref Image Size controls together (see assets/h3_facerefine.js). The server never reads it.</summary>
+    public static T2IRegisteredParam<string> H3FaceRefineMode;
+
     // Execution parameters
     public static T2IRegisteredParam<string> H3FaceRefineTarget;
     public static T2IRegisteredParam<double> H3FaceRefineDenoise;
@@ -203,7 +215,53 @@ public class H3FaceRefineExtension : Extension
             IsAdvanced: false
         );
 
+        H3FaceRefineQualityGroup = new(
+            Name: "H3 Face Quality",
+            Description: "Sampling and detection tuning. The defaults work for most videos.",
+            Toggles: false,
+            Open: false,
+            OrderPriority: 50,
+            Parent: H3FaceRefineGroup
+        );
+
+        H3FaceRefineAlignGroup = new(
+            Name: "H3 Face Alignment",
+            Description: "Keeps the regenerated face on the original head. Only needed if the pasted face slides or wobbles.",
+            Toggles: false,
+            Open: false,
+            OrderPriority: 51,
+            Parent: H3FaceRefineGroup
+        );
+
+        H3FaceRefineMaskGroup = new(
+            Name: "H3 Face Mask",
+            Description: "Shape and blending of the paste mask. Only needed if the edge of the refined face is visible.",
+            Toggles: false,
+            Open: false,
+            OrderPriority: 52,
+            Parent: H3FaceRefineGroup
+        );
+
         double priority = 0;
+
+        H3FaceRefineMode = T2IParamTypes.Register<string>(new T2IParamType(
+            Name: "H3 Face Mode",
+            Description: "Sets the controls that must change together. You can still adjust them afterwards.\n" +
+                         "- 'Restore': same person, fixes blur or ghosting.\n" +
+                         "- 'Substitute Features': another person from Reference Image, transfers distinguishing features.\n" +
+                         "- 'Substitute Full Identity': another person from Reference Image, transfers a fully different identity.\n" +
+                         "- 'Manual': changes nothing. Selected automatically when the values match no mode.",
+            Default: "Restore",
+            Group: H3FaceRefineGroup,
+            OrderPriority: priority++,
+            FeatureFlag: "h3_face_refine",
+            DoNotPreview: true,
+            DoNotSave: true,
+            Nonreusable: true,
+            HideFromMetadata: true,
+            IntentionalUnused: true,
+            GetValues: _ => ["Restore", "Substitute Features", "Substitute Full Identity", "Manual"]
+        ));
 
         H3FaceRefineTarget = T2IParamTypes.Register<string>(new T2IParamType(
             Name: "H3 Face Target",
@@ -247,11 +305,10 @@ public class H3FaceRefineExtension : Extension
             Max: 1.0,
             Step: 0.05,
             ViewType: ParamViewType.SLIDER,
-            Group: H3FaceRefineGroup,
+            Group: H3FaceRefineQualityGroup,
             OrderPriority: priority++,
             FeatureFlag: "h3_face_refine",
-            DoNotPreview: true,
-            IsAdvanced: true
+            DoNotPreview: true
         ));
 
         H3FaceRefineMultLarge = T2IParamTypes.Register<double>(new T2IParamType(
@@ -262,11 +319,10 @@ public class H3FaceRefineExtension : Extension
             Max: 1.0,
             Step: 0.05,
             ViewType: ParamViewType.SLIDER,
-            Group: H3FaceRefineGroup,
+            Group: H3FaceRefineQualityGroup,
             OrderPriority: priority++,
             FeatureFlag: "h3_face_refine",
-            DoNotPreview: true,
-            IsAdvanced: true
+            DoNotPreview: true
         ));
 
         H3FaceRefineSteps = T2IParamTypes.Register<int>(new T2IParamType(
@@ -276,8 +332,8 @@ public class H3FaceRefineExtension : Extension
             Min: 1,
             Max: 20,
             Step: 1,
-            Group: H3FaceRefineGroup,
-            OrderPriority: priority++,
+            Group: H3FaceRefineQualityGroup,
+            OrderPriority: -1,
             FeatureFlag: "h3_face_refine",
             DoNotPreview: true
         ));
@@ -288,26 +344,25 @@ public class H3FaceRefineExtension : Extension
                          "'auto_capped_768' (recommended) scales up to 768px for maximum detail while keeping VRAM low.\n" +
                          "'512' is faster and lighter.",
             Default: "auto_capped_768",
-            Group: H3FaceRefineGroup,
+            Group: H3FaceRefineQualityGroup,
             OrderPriority: priority++,
             FeatureFlag: "h3_face_refine",
             DoNotPreview: true,
-            IsAdvanced: true,
             GetValues: _ => ["auto_capped_768", "768", "512"]
         ));
 
         H3FaceRefineFeather = T2IParamTypes.Register<int>(new T2IParamType(
             Name: "H3 Face Feather",
-            Description: "Gaussian blur feather radius in source pixels applied to the composite paste mask. 18-24 provides soft, invisible edge blending.",
+            Description: "Gaussian blur feather radius in source pixels applied to the fixed ellipse paste mask. 18-24 provides soft, invisible edge blending.\n" +
+                         "Only used without 'H3 Face SAM Mask', which has its own 'H3 Face SAM Feather'.",
             Default: Num(H3FaceRefineDefaults.Feather),
             Min: 2,
             Max: 64,
             Step: 2,
-            Group: H3FaceRefineGroup,
-            OrderPriority: priority++,
+            Group: H3FaceRefineMaskGroup,
+            OrderPriority: 100,
             FeatureFlag: "h3_face_refine",
-            DoNotPreview: true,
-            IsAdvanced: true
+            DoNotPreview: true
         ));
 
         H3FaceRefineConfidence = T2IParamTypes.Register<double>(new T2IParamType(
@@ -318,11 +373,10 @@ public class H3FaceRefineExtension : Extension
             Max: 0.90,
             Step: 0.05,
             ViewType: ParamViewType.SLIDER,
-            Group: H3FaceRefineGroup,
+            Group: H3FaceRefineQualityGroup,
             OrderPriority: priority++,
             FeatureFlag: "h3_face_refine",
-            DoNotPreview: true,
-            IsAdvanced: true
+            DoNotPreview: true
         ));
 
         H3FaceRefinePrompt = T2IParamTypes.Register<string>(new T2IParamType(
@@ -365,11 +419,10 @@ public class H3FaceRefineExtension : Extension
                          "'match' scales the reference down to the generation's canvas area (faster, default).\n" +
                          "'max' conditions at the reference pipeline's full 2048px short edge for best identity fidelity - use it when replacing a face with a different person. Note that reference tokens ride through every sampling step, so 'max' can be several times slower.",
             Default: "match",
-            Group: H3FaceRefineGroup,
+            Group: H3FaceRefineQualityGroup,
             OrderPriority: priority++,
             FeatureFlag: "h3_face_refine",
             DoNotPreview: true,
-            IsAdvanced: true,
             GetValues: _ => ["match", "max"]
         ));
 
@@ -377,8 +430,7 @@ public class H3FaceRefineExtension : Extension
             Name: "H3 Face Auto-Align Paste",
             Description: "Detects the face in each regenerated crop and in the matching source crop, then shifts the regenerated one so the two faces coincide before stitching - cancelling the few-pixel content offset H3 leaves inside the paste (the visible 'sliding face'). Translation only, so a substituted identity is not distorted. Leave on.",
             Default: "true",
-            Toggleable: true,
-            Group: H3FaceRefineGroup,
+            Group: H3FaceRefineAlignGroup,
             OrderPriority: priority++,
             FeatureFlag: "h3_face_refine",
             DoNotPreview: true
@@ -392,11 +444,10 @@ public class H3FaceRefineExtension : Extension
             Max: 1.0,
             Step: 0.05,
             ViewType: ParamViewType.SLIDER,
-            Group: H3FaceRefineGroup,
+            Group: H3FaceRefineAlignGroup,
             OrderPriority: priority++,
             FeatureFlag: "h3_face_refine",
-            DoNotPreview: true,
-            IsAdvanced: true
+            DoNotPreview: true
         ));
 
         H3FaceAlignSmooth = T2IParamTypes.Register<int>(new T2IParamType(
@@ -406,11 +457,10 @@ public class H3FaceRefineExtension : Extension
             Min: 1,
             Max: 51,
             Step: 2,
-            Group: H3FaceRefineGroup,
+            Group: H3FaceRefineAlignGroup,
             OrderPriority: priority++,
             FeatureFlag: "h3_face_refine",
-            DoNotPreview: true,
-            IsAdvanced: true
+            DoNotPreview: true
         ));
 
         H3FaceAlignMaxShift = T2IParamTypes.Register<double>(new T2IParamType(
@@ -420,19 +470,17 @@ public class H3FaceRefineExtension : Extension
             Min: 10.0,
             Max: 200.0,
             Step: 5.0,
-            Group: H3FaceRefineGroup,
+            Group: H3FaceRefineAlignGroup,
             OrderPriority: priority++,
             FeatureFlag: "h3_face_refine",
-            DoNotPreview: true,
-            IsAdvanced: true
+            DoNotPreview: true
         ));
 
         H3FaceSAMMask = T2IParamTypes.Register<bool>(new T2IParamType(
             Name: "H3 Face SAM Mask",
             Description: "Segment the face per frame with SAM (ComfyUI-Impact-Pack) and paste through that face-shaped mask instead of a fixed ellipse - the blend follows jaw and hairline, killing the border artifacts of a fixed mask. Needs ComfyUI-Impact-Pack and a SAM model in models/sams/.",
             Default: "true",
-            Toggleable: true,
-            Group: H3FaceRefineGroup,
+            Group: H3FaceRefineMaskGroup,
             OrderPriority: priority++,
             FeatureFlag: "h3_face_refine,comfyui_impact_pack",
             DoNotPreview: true
@@ -446,11 +494,10 @@ public class H3FaceRefineExtension : Extension
             Max: 1.0,
             Step: 0.01,
             ViewType: ParamViewType.SLIDER,
-            Group: H3FaceRefineGroup,
+            Group: H3FaceRefineMaskGroup,
             OrderPriority: priority++,
             FeatureFlag: "h3_face_refine,comfyui_impact_pack",
-            DoNotPreview: true,
-            IsAdvanced: true
+            DoNotPreview: true
         ));
 
         H3FaceSAMDilation = T2IParamTypes.Register<int>(new T2IParamType(
@@ -460,11 +507,10 @@ public class H3FaceRefineExtension : Extension
             Min: 0,
             Max: 96,
             Step: 2,
-            Group: H3FaceRefineGroup,
+            Group: H3FaceRefineMaskGroup,
             OrderPriority: priority++,
             FeatureFlag: "h3_face_refine,comfyui_impact_pack",
-            DoNotPreview: true,
-            IsAdvanced: true
+            DoNotPreview: true
         ));
 
         H3FaceSAMFeather = T2IParamTypes.Register<int>(new T2IParamType(
@@ -474,11 +520,10 @@ public class H3FaceRefineExtension : Extension
             Min: 2,
             Max: 64,
             Step: 2,
-            Group: H3FaceRefineGroup,
+            Group: H3FaceRefineMaskGroup,
             OrderPriority: priority++,
             FeatureFlag: "h3_face_refine,comfyui_impact_pack",
-            DoNotPreview: true,
-            IsAdvanced: true
+            DoNotPreview: true
         ));
 
         H3FaceAlignMaxRate = T2IParamTypes.Register<double>(new T2IParamType(
@@ -488,11 +533,10 @@ public class H3FaceRefineExtension : Extension
             Min: 0.1,
             Max: 3.0,
             Step: 0.05,
-            Group: H3FaceRefineGroup,
+            Group: H3FaceRefineAlignGroup,
             OrderPriority: priority++,
             FeatureFlag: "h3_face_refine",
-            DoNotPreview: true,
-            IsAdvanced: true
+            DoNotPreview: true
         ));
 
         H3FaceRefineVideoFile = T2IParamTypes.Register<string>(new T2IParamType(
